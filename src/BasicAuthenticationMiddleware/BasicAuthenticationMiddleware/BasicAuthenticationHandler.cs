@@ -3,12 +3,14 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Owin.Logging;
 using Microsoft.Owin.Security;
+using Microsoft.Owin.Security.DataHandler.Encoder;
 using Microsoft.Owin.Security.Infrastructure;
 
 namespace BasicAuthenticationMiddleware
 {
     public class BasicAuthenticationHandler : AuthenticationHandler<BasicAuthenticationOptions>
     {
+        private const string BasicSchemaPrefix = "Basic ";
         private readonly ILogger _logger;
         public BasicAuthenticationHandler(ILogger logger)
         {
@@ -20,31 +22,26 @@ namespace BasicAuthenticationMiddleware
             try
             {
                 var authorization = Request.Headers.Get("Authorization");
-                if (string.IsNullOrEmpty(authorization))
-                {
-                    _logger.WriteInformation("Authorization not found.");
-                    return null;
-                }
-
-                // "authorization header schema: Basic ....."
-                if (!authorization.StartsWith("Basic", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(authorization) || !authorization.StartsWith(BasicSchemaPrefix, StringComparison.OrdinalIgnoreCase))
                 {
                     return null;
                 }
 
-                var authorizationParameter = authorization.Substring("Baisc ".Length).Trim();
-
+                var authorizationParameter = authorization.Substring(BasicSchemaPrefix.Length).Trim();
                 if (string.IsNullOrEmpty(authorizationParameter))
                 {
-                    _logger.WriteInformation("Authorization value is empty.");
+                    _logger.WriteInformation("authorization parameter is null or empty.");
                     return null;
                 }
 
                 var tuple = ExtractAuthorizationParameter(authorizationParameter);
+                if (tuple == null)
+                {
+                    return null;
+                }
 
+                var context = new BasicAuthenticationContext(userName: tuple.Item1, password: tuple.Item2);
 
-
-                var context = new BasicAuthenticationContext(tuple.Item1, tuple.Item2);
                 var identity = await Options.AuthenticateBasicCredentials(context);
 
                 if (identity != null)
@@ -63,31 +60,12 @@ namespace BasicAuthenticationMiddleware
 
         private static Tuple<string, string> ExtractAuthorizationParameter(string authorizationParameter)
         {
-            byte[] protectedData;
-            try
-            {
-                protectedData = Convert.FromBase64String(authorizationParameter);
-            }
-            catch (FormatException)
-            {
-                return null;
-            }
-
-            string decodedData;
-            try
-            {
-                decodedData = Encoding.ASCII.GetString(protectedData);
-            }
-            catch (DecoderFallbackException)
-            {
-                return null;
-            }
-
+            var protectedData = TextEncodings.Base64.Decode(authorizationParameter);
+            var decodedData = Encoding.ASCII.GetString(protectedData);
             if (string.IsNullOrEmpty(decodedData))
             {
                 return null;
             }
-
 
             // "username:password"
             var index = decodedData.IndexOf(":", StringComparison.Ordinal);
